@@ -304,6 +304,95 @@
             }
         }
 
+        // Quadtree to find neighbouring atoms fast
+        // Expects a boundary with a center point and one horizonal and
+        // one vertical "radius" ([x, y, rx, ry]) and a capacity for each subtree.
+        // In this implementation atoms are only stored in leafs.
+        class Quadtree {
+            constructor(boundary, capacity = 64) {
+                this.boundary = boundary;
+                this.capacity = capacity;
+                this.points = [];
+                this.subtrees = null;
+            }
+            contains(point, range = this.boundary) {
+                return (
+                    range[0] - range[2] <= point[0] &&
+                    range[0] + range[2] >= point[0] &&
+                    range[1] - range[3] <= point[1] &&
+                    range[1] + range[3] >= point[1]
+                );
+            }
+            intersects(other) {
+                return !(
+                    this.boundary[0] - this.boundary[2] > other[0] + other[2] ||
+                    this.boundary[0] + this.boundary[2] < other[0] - other[2] ||
+                    this.boundary[1] - this.boundary[3] > other[1] + other[3] ||
+                    this.boundary[1] + this.boundary[3] < other[1] - other[3]
+                );
+            }
+            subdivide() {
+                const x = this.boundary[0]
+                const y = this.boundary[1]
+                const rx = this.boundary[2] / 2;
+                const ry = this.boundary[3] / 2;
+                this.subtrees = [];
+                for (let i = -1; i < 2; i += 2) {
+                    for (let j = -1; j < 2; j += 2) {
+                        const newTree = new Quadtree(
+                            [x + i * rx, y + j * ry, rx, ry],
+                            this.capacity
+                        );
+                        this.subtrees.push(newTree);
+                    }
+                }
+                this.points.forEach(p => this.insert(p));
+                this.points = null;
+            }
+            insert(point) {
+                if (!this.contains(point)) {
+                    return false;
+                }
+                if (!this.subtrees && this.points.length < this.capacity) {
+                    this.points.push(point);
+                    return true;
+                }
+                if (!this.subtrees) {
+                    this.subdivide();
+                }
+                return this.subtrees.some(t => t.insert(point));
+            }
+            _query(range, found) {
+                if (!this.intersects(range)) {
+                    return;
+                }
+                if (!this.subtrees) {
+                    for (const p of this.points) {
+                        if (this.contains(p, range)) {
+                            found.push(p);
+                        }
+                    }
+                    return;
+                }
+                this.subtrees.forEach(t => t._query(range, found));
+            }
+            // return all atoms in a range (like the boundary in the constructor)
+            query(range) {
+                const found = [];
+                this._query(range, found);
+                return found;
+            }
+        }
+
+        // return a quadtree that stores all atoms
+        function getQuadtree() {
+            const midX = canvas.width / 2;
+            const midY = canvas.height / 2;
+            const qTree = new Quadtree([midX, midY, midX, midY], 64);
+            atoms.forEach(a => qTree.insert(a));
+            return qTree;
+        }
+
         // Run Application
         loadSeedFromUrl()
 
@@ -466,13 +555,16 @@
         // Apply Rules ( How atoms interact with each other )
         const applyRules = () => {
             total_v = 0.;
+            const qTree = getQuadtree();
             // update velocity first
             for (const a of atoms) {
                 let fx = 0;
                 let fy = 0;
                 const idx = a[4] * settings.numColors;
                 const r2 = settings.radii2Array[a[4]]
-                for (const b of atoms) {
+                const r = settings.radii[settings.colors[a[4]]];
+                const neighbours = qTree.query([a[0], a[1], r, r]);
+                for (const b of neighbours) {
                     const g = settings.rulesArray[idx + b[4]];
                     const dx = a[0] - b[0];
                     const dy = a[1] - b[1];
